@@ -4,7 +4,7 @@ import pandas as pd
 import argparse
 
 
-from datasets import Dataset, load_dataset
+from datasets import Dataset, load_dataset, load_from_disk
 from transformers import DataCollatorForLanguageModeling
 from transformers import GPT2Tokenizer, GPT2LMHeadModel
 from transformers import Trainer, TrainingArguments
@@ -75,18 +75,23 @@ if not os.path.isfile(data):
     dataset =Dataset.from_pandas(reviews, split='train') #no split for now
     print(dataset.features)    
     dataset = dataset.map(lambda x : tokenizer(x["Text"], truncation = True, max_length = 1024), batched=True)
-    dataset.to_csv(data) 
+    dataset.to_csv(data, index = None) 
    
 #############################   Load the data and pre-process ###################################
 
 print("Loading the dataset")
 
-dataset = load_dataset(data, split = "train")
+dataset = load_dataset("csv", data_files=data, split = "train")
+dataset.set_format(type="torch", columns=["Text", "input_ids", "attention_mask", "Summary"])
+dataset.format['type']
+
+print(dataset.features)
+
 split = ['train'+RATIO["train"], 'validation'+RATIO["validation"], 'test'+RATIO["test"]]
 
 #dataset.set_format(type="torch", columns=["input_ids", "token_type_ids", "attention_mask", "summary"])
 
-data_collator = load_data_collator(tokenizer, mlm = False)
+#data_collator = load_data_collator(tokenizer, mlm = False)
 
 #############################  Fine Tuning ##########################################
 

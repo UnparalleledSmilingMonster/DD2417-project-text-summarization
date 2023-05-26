@@ -6,7 +6,8 @@
 ## Requirements
 The repository contains a copy of my conda virtual environment. Use the following command to copy it.
 `conda env create -f environment.yml`
-
+To remove the environment:
+`conda remove -n gpt2 --all`
 
 ## Dataset 
 Download **Amazon Fine Food Reviews** from the project topics file. Put the directory in the current directory.

@@ -33,6 +33,8 @@ OUTPUT_DIR = os.path.join(MODEL_DIR, MODEL_NAME)
 
 MAX_LENGTH = 1024
 MAX_LENGTH_LABEL = 128
+MAX_LENGTH_GENERATION = 10
+MIN_LENGTH_GENERATION = 2
 
 OVERWRITE_OUTPUT_DIR = False
 NUM_EPOCHS = 1
@@ -163,7 +165,6 @@ def finetune(model, tokenizer, train_dataset, eval_dataset, test_dataset):
     model.to(device)
     
     progress_bar = tqdm(range(num_training_steps))
-
     model.train()
     for epoch in range(NUM_EPOCHS):
         for batch in train_dataloader:
@@ -182,6 +183,8 @@ def finetune(model, tokenizer, train_dataset, eval_dataset, test_dataset):
             optimizer.step()
             lr_scheduler.step()
             progress_bar.update(1)
+        model.save_pretrained(OUTPUT_DIR)
+        print("Model saved at epoch", epoch)
 
 
     metric = evaluate.load('accuracy', 'rouge')  
@@ -223,23 +226,30 @@ def finetune(model, tokenizer, train_dataset, eval_dataset, test_dataset):
 """
 
 
-def summarize():
+def summarize(model, tokenizer, text):
     """
     Given a text input, summarizes it.
     """
-    return ""
+    encoded_input = tokenizer(text_target=text, truncation=True, max_length=MAX_LENGTH_LABEL,return_tensors="pt")
+    output = model.generate(**encoded_input,max_new_tokens=MAX_LENGTH_GENERATION, min_new_tokens =MIN_LENGTH_GENERATION,  do_sample=False,temperature = 1.0, top_k=50, num_beams = 2) #parameters to tune for the task
+    print("Summary :\n", tokenizer.decode(output[0], skip_special_tokens=True))
 
 
-def main() :    
+def main() :  
+    def my_bool(s):
+        return s != 'False'  
+        
+    default_text = "This product was very bad. It tasted bad and was so pricey for such little quality and quantity. I do not recommend it at all!"
+        
    # Parse command line arguments
     parser = argparse.ArgumentParser(description='GPT-2 Parser')
-    parser.add_argument('--finetune', '-ft', type=bool,  default=True, help='Whether to finetune or not.')
-    parser.add_argument('--input_sentence', '-i', type=str, default="Summarize this long long long long text.", help='The sentence to be summarized.')
+    parser.add_argument('--finetune', '-ft', type=my_bool,  default=True, help='Whether to finetune or not.')
+    parser.add_argument('--input_sentence', '-i', type=str, default=default_text, help='The sentence to be summarized.')
 
     arguments = parser.parse_args()
     
     model, tokenizer = load_model()
-
+    
     if arguments.finetune:
         data = os.path.join(DATASET_DIR, DATASET_NAME)
         if not os.path.isfile(data):
@@ -249,7 +259,8 @@ def main() :
         finetune(model, tokenizer, dataset["train"], dataset["validation"], dataset["test"])
 
     else:
-        summarize(arguments.input_sentence)
+        print("Summarizing the text inputted.")
+        summarize(model, tokenizer, arguments.input_sentence)
     
     
 

@@ -9,6 +9,9 @@ The repository contains a copy of my conda virtual environment. Use the followin
 To remove the environment:
 `conda remove -n gpt2 --all`
 
+To create the **requirements.txt** file from the current virtual env, use the command : 
+`pip freeze > requirements.txt`
+
 ## Dataset 
 Download **Amazon Fine Food Reviews** from the project topics file. Put the directory in the current directory.
 

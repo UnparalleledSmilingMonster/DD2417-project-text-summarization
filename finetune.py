@@ -39,7 +39,7 @@ MIN_LENGTH_GENERATION = 2
 OVERWRITE_OUTPUT_DIR = False
 NUM_EPOCHS = 1
 SAVE_STEPS = 100
-BATCH_SIZE = 16
+BATCH_SIZE = 1
 LEARNING_RATE = 5e-5
 
 
@@ -92,21 +92,24 @@ def process_data(data, tokenizer):
 
     reviews = reviews[reviews["Summary"].str.strip().astype(bool)]
     reviews = reviews[reviews["Text"].str.strip().astype(bool)]
+    reviews["concat"] = reviews["Text"] + "TL;DR" + reviews["Summary"]
     print("Number of clean reviews:", reviews.shape[0])
+    reviews = reviews[reviews["concat"].str.strip().str.len()<=MAX_LENGTH] #remove entries too long
+    print("Number of right sized reviews:", reviews.shape[0])
     dataset = Dataset.from_pandas(reviews, split="train")
 
-    dataset = dataset.map(lambda x : tokenizer(text_target=x['Summary'], truncation=True, max_length=MAX_LENGTH_LABEL), batched=True)
-    dataset = dataset.rename_column("input_ids", "labels")
-    dataset = dataset.remove_columns(["attention_mask"])
-    dataset = dataset.remove_columns(["__index_level_0__", "Summary"])
-    dataset = dataset.map(lambda x : tokenizer(x["Text"], truncation=True, max_length=MAX_LENGTH), batched=True)
-    dataset = dataset.remove_columns(["Text"])
+    #dataset = dataset.map(lambda x : tokenizer(text_target=x['Summary'], truncation=True, max_length=MAX_LENGTH_LABEL), batched=True)
+    #dataset = dataset.rename_column("input_ids", "labels")
+    #dataset = dataset.remove_columns(["attention_mask"])
+    #dataset = dataset.remove_columns(["__index_level_0__", "Summary"])
+    dataset = dataset.map(lambda x : tokenizer(x["concat"], truncation=True, max_length=MAX_LENGTH), batched=True) #should not truncate since we filtered before 
+    dataset = dataset.remove_columns(["concat"])
+    print(dataset.features)
 
     with open(data, "w") as f:
         for i in range(dataset.shape[0]):
             d = {"input_ids": dataset[i]["input_ids"],
-                 "attention_mask": dataset[i]["attention_mask"],
-                 "labels": dataset[i]["labels"]}
+                 "attention_mask": dataset[i]["attention_mask"]}
             f.write(json.dumps(d))
             f.write("\n")
 
@@ -117,7 +120,7 @@ def load_data(data):
     print("Loading the dataset...")
     dataset = load_dataset("json", data_files=data, split="train")
     print(dataset.features)
-    dataset.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
+    dataset.set_format(type="torch", columns=["input_ids", "attention_mask"]) #removed "labels"
 
     # 90% train, 20% test + validation
     train_test = dataset.train_test_split(test_size=RATIO["test"] + RATIO["validation"])
@@ -137,7 +140,7 @@ def pad_batcher(batch):
     """Batch is a list of dictionaries. Each dictionary is a row of the dataset.
     """
     batchsize = len(batch)
-    inputs, masks, labels = [], [], []
+    inputs, masks = [], []
     for i in range(batchsize):
         inputs.append(
             torch.cat((batch[i]["input_ids"].reshape(1, -1),
@@ -145,18 +148,20 @@ def pad_batcher(batch):
         masks.append(
             torch.cat((batch[i]["attention_mask"].reshape(1, -1),
                     torch.zeros(1, MAX_LENGTH - len(batch[i]["input_ids"]), dtype=torch.int32)), dim=1))
+        """
         labels.append(
             torch.cat((batch[i]["labels"].reshape(1, -1),
-                    torch.full((1, MAX_LENGTH_LABEL - len(batch[i]["labels"])), -1, dtype=torch.int32)), dim=1))
-    return torch.cat(inputs, dim=0), torch.cat(masks, dim=0), torch.cat(labels, dim=0)
+                    torch.full((1, MAX_LENGTH - len(batch[i]["labels"])), -1, dtype=torch.int32)), dim=1))
+        """
+    return torch.cat(inputs, dim=0), torch.cat(masks, dim=0) #, torch.cat(labels, dim=0)
 
 
 def finetune(model, tokenizer, train_dataset, eval_dataset, test_dataset):
     train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=BATCH_SIZE, collate_fn=pad_batcher)
-    eval_dataloader = DataLoader(eval_dataset, batch_size=16, collate_fn=pad_batcher)
-    test_dataloader = DataLoader(test_dataset, batch_size=16, collate_fn=pad_batcher)
+    eval_dataloader = DataLoader(eval_dataset, batch_size=BATCH_SIZE, collate_fn=pad_batcher)
+    test_dataloader = DataLoader(test_dataset, batch_size=BATCH_SIZE, collate_fn=pad_batcher)
     
-    optimizer = AdamW(model.parameters(), lr=LEARNING_RATE)
+    optimizer = AdamW(params = model.parameters(), lr=LEARNING_RATE)
     num_training_steps = NUM_EPOCHS * len(train_dataloader)
     lr_scheduler = get_scheduler(
         name="linear", optimizer=optimizer, num_warmup_steps=0, num_training_steps=num_training_steps
@@ -169,14 +174,11 @@ def finetune(model, tokenizer, train_dataset, eval_dataset, test_dataset):
     for epoch in range(NUM_EPOCHS):
         for batch in train_dataloader:
             optimizer.zero_grad()
-
-            inputs, masks, labels = batch
+            inputs, masks = batch
             inputs.to(device)
             masks.to(device)
-            labels.to(device)
-
-            outputs = model(inputs, attention_mask=masks, labels=labels)
-
+            #labels.to(device)
+            outputs = model(inputs, attention_mask=masks, labels = inputs)
             loss = outputs.loss
             loss.backward()
 
@@ -196,7 +198,7 @@ def finetune(model, tokenizer, train_dataset, eval_dataset, test_dataset):
 
         logits = outputs.logits
         predictions = torch.argmax(logits, dim=-1)
-        metric.add_batch(predictions=predictions, references=batch["labels"])
+        metric.add_batch(predictions=predictions, references=batch["training"])
 
     metric.compute()
     print(metric)
@@ -230,6 +232,7 @@ def summarize(model, tokenizer, text):
     """
     Given a text input, summarizes it.
     """
+    text += " TL;DR: "
     encoded_input = tokenizer(text_target=text, truncation=True, max_length=MAX_LENGTH_LABEL,return_tensors="pt")
     output = model.generate(**encoded_input,max_new_tokens=MAX_LENGTH_GENERATION, min_new_tokens =MIN_LENGTH_GENERATION,  do_sample=False,temperature = 1.0, top_k=50, num_beams = 2) #parameters to tune for the task
     print("Summary :\n", tokenizer.decode(output[0], skip_special_tokens=True))

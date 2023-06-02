@@ -37,7 +37,7 @@ RATIO = {"train":0.8, "validation":0.1, "test":0.1}
 OUTPUT_DEFAULT_DIR = os.path.join(MODEL_DIR, MODEL_DEFAULT_NAME)
 OUTPUT_DIR = os.path.join(MODEL_DIR, MODEL_NAME)
 
-MAX_LENGTH = 256
+MAX_LENGTH = 512
 MAX_LENGTH_LABEL = 128
 MAX_LENGTH_GENERATION = 10
 MIN_LENGTH_GENERATION = 2
@@ -45,7 +45,7 @@ MIN_LENGTH_GENERATION = 2
 OVERWRITE_OUTPUT_DIR = False
 NUM_EPOCHS = 1
 SAVE_STEPS = 100
-BATCH_SIZE = 16
+BATCH_SIZE = 8
 LEARNING_RATE = 5e-5
 
 
@@ -166,18 +166,19 @@ def finetune(model, tokenizer, train_dataset, eval_dataset, test_dataset):
     train_dataloader = DataLoader(train_dataset, shuffle=False, batch_size=BATCH_SIZE, collate_fn=pad_batcher) #shuffle was set to False because cuda bug cpu
     eval_dataloader = DataLoader(eval_dataset, batch_size=BATCH_SIZE, collate_fn=pad_batcher)
     test_dataloader = DataLoader(test_dataset, batch_size=BATCH_SIZE, collate_fn=pad_batcher)
-    
+   
+    device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
+    torch.cuda.set_device(device)
+    model.to(device)
+    print(device)
+
     optimizer = AdamW(params = model.parameters(), lr=LEARNING_RATE)
     num_training_steps = NUM_EPOCHS * len(train_dataloader)
     lr_scheduler = get_scheduler(
         name="linear", optimizer=optimizer, num_warmup_steps=0, num_training_steps=num_training_steps
     )
-    device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
-    print(device)
-    torch.set_default_device(device) #important 
-
-    model.to(device)
-    
+    # torch.set_default_device(device) #important
+ 
     progress_bar = tqdm(range(num_training_steps))
     model.train()
     for epoch in range(NUM_EPOCHS):
@@ -188,7 +189,7 @@ def finetune(model, tokenizer, train_dataset, eval_dataset, test_dataset):
             inputs.to(device)
             masks.to(device)
             #labels.to(device)
-            outputs = model(inputs, attention_mask=masks, labels = inputs)
+            outputs = model(inputs.cuda(), attention_mask=masks.cuda(), labels = inputs.cuda())
             loss = outputs.loss
             loss.backward()
 

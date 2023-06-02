@@ -174,7 +174,7 @@ def finetune(model, tokenizer, train_dataset, eval_dataset, test_dataset):
     )
     device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
     print(device)
-    torch.set_default_device(device) #important 
+    torch.set_default_device(device)
 
     model.to(device)
     
@@ -200,10 +200,8 @@ def finetune(model, tokenizer, train_dataset, eval_dataset, test_dataset):
 
         print("Model saved at epoch", epoch)
         model.save_pretrained(OUTPUT_DIR)
-        """ #Code for removing old weights and replacing them after 1 epoch
         process = subprocess.run("rm -rv /gdrive/'My Drive'/project-DD2417/models/gpt2-117M-summary; cp -rv models/gpt2-117M-summary /gdrive/'My Drive'/project-DD2417/models; \
     rm -rv /gdrive/'My Drive'/ ", shell = True)
-        """
 
 
     metric = evaluate.load('accuracy', 'rouge')  

@@ -47,7 +47,7 @@ MIN_LENGTH_GENERATION = 2
 OVERWRITE_OUTPUT_DIR = False
 NUM_EPOCHS = 1
 SAVE_STEPS = 100
-BATCH_SIZE = 32
+BATCH_SIZE = 8
 LEARNING_RATE = 5e-5
 
 
@@ -174,7 +174,7 @@ def pad_batcher(batch):
 
 
 def finetune(model, tokenizer, train_dataset, eval_dataset, test_dataset):
-    train_dataloader = DataLoader(train_dataset, shuffle=False, batch_size=BATCH_SIZE, collate_fn=pad_batcher) #shuffle was set to False because cuda bug cpu
+    train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=BATCH_SIZE, collate_fn=pad_batcher) #shuffle was set to False because cuda bug cpu
     eval_dataloader = DataLoader(eval_dataset, batch_size=BATCH_SIZE, collate_fn=pad_batcher)
     test_dataloader = DataLoader(test_dataset, batch_size=BATCH_SIZE, collate_fn=pad_batcher)
    
@@ -204,15 +204,15 @@ def finetune(model, tokenizer, train_dataset, eval_dataset, test_dataset):
             #labels.to(device)
             outputs = model(inputs.cuda(), attention_mask=masks.cuda(), labels = inputs.cuda())
             loss = outputs.loss
-            loss_list.append(loss)
+            loss_list.append(loss.item())
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
             optimizer.step()
             lr_scheduler.step()
             progress_bar.update(1)
             enum +=1
-            if enum %100 == 0 :
+            if enum % 100 == 0 :
                 print("Training loss:", loss)
 
         vloss = 0
@@ -227,7 +227,7 @@ def finetune(model, tokenizer, train_dataset, eval_dataset, test_dataset):
                 vloss += voutputs.loss
                 nbatches += 1
             vloss /= nbatches
-            vloss_list.append(vloss)
+            vloss_list.append(vloss.item())
             print("Validation loss:", vloss)
         model.train()
 

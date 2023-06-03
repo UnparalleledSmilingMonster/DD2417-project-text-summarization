@@ -47,8 +47,9 @@ MIN_LENGTH_GENERATION = 2
 OVERWRITE_OUTPUT_DIR = False
 NUM_EPOCHS = 1
 SAVE_STEPS = 100
-BATCH_SIZE = 8
+BATCH_SIZE = 32
 LEARNING_RATE = 5e-5
+
 
 
 ############################# Load the GPT-2 model ################################
@@ -100,20 +101,26 @@ def process_data(data, tokenizer):
 
     reviews = reviews[reviews["Summary"].str.strip().astype(bool)]
     reviews = reviews[reviews["Text"].str.strip().astype(bool)]
-    reviews["concat"] = reviews["Text"] + "TL;DR" + reviews["Summary"]
+    reviews["concat"] = reviews["Text"] + " TL;DR " + reviews["Summary"]
+    reviews = reviews.sample(n=NUM_SAMPLES+ int(0.2*NUM_SAMPLES), random_state=127, axis=0)
     print("Number of clean reviews:", reviews.shape[0])
-    reviews = reviews[reviews["concat"].str.strip().str.len()<=MAX_LENGTH] #remove entries too long
-    print("Number of right sized reviews:", reviews.shape[0])
-    reviews = reviews.sample(n=NUM_SAMPLES, random_state=127, axis=0)
-    print("Number of selected reviews:", reviews.shape[0])
+    reviews = reviews.drop(["Text", "Summary"], axis = 1)
+    
     dataset = Dataset.from_pandas(reviews, split="train")
+    dataset = dataset.map(lambda x : tokenizer(x["concat"], truncation=False, max_length=MAX_LENGTH), batched=True) #should not truncate since we filtered before 
+    dataset = dataset.remove_columns(["concat","__index_level_0__"])
+    
+    df = dataset.to_pandas()
+    df["length"] = df["input_ids"].apply(lambda x: len(x))
+    print(df["length"].max())
+    
+    df = df[df["length"]< MAX_LENGTH]
+    print("Right sized reviews :",df.shape[0])
+        
+    df = df[:NUM_SAMPLES]
+    print("Final size of the dataset :",df.shape[0])    
+    dataset = Dataset.from_pandas(df, split="train")     
 
-    #dataset = dataset.map(lambda x : tokenizer(text_target=x['Summary'], truncation=True, max_length=MAX_LENGTH_LABEL), batched=True)
-    #dataset = dataset.rename_column("input_ids", "labels")
-    #dataset = dataset.remove_columns(["attention_mask"])
-    #dataset = dataset.remove_columns(["__index_level_0__", "Summary"])
-    dataset = dataset.map(lambda x : tokenizer(x["concat"], truncation=True, max_length=MAX_LENGTH), batched=True) #should not truncate since we filtered before 
-    dataset = dataset.remove_columns(["concat"])
     print(dataset.features)
 
     with open(data, "w") as f:
@@ -175,7 +182,7 @@ def finetune(model, tokenizer, train_dataset, eval_dataset, test_dataset):
     torch.cuda.set_device(device)
     model.to(device)
     print(device)
-
+    
     optimizer = AdamW(params = model.parameters(), lr=LEARNING_RATE)
     num_training_steps = NUM_EPOCHS * len(train_dataloader)
     lr_scheduler = get_scheduler(
@@ -199,6 +206,7 @@ def finetune(model, tokenizer, train_dataset, eval_dataset, test_dataset):
             loss = outputs.loss
             loss_list.append(loss)
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm=1.0)
 
             optimizer.step()
             lr_scheduler.step()

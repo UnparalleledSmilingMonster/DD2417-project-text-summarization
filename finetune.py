@@ -32,10 +32,12 @@ DATASET_NAME = "dataset_tokenized.json"
 MODEL_DIR = "models"
 MODEL_DEFAULT_NAME = "gpt2-117M"
 MODEL_NAME = "gpt2-117M-summary"
-RATIO = {"train":0.8, "validation":0.1, "test":0.1}
+RATIO = {"train":0.9, "validation":0.05, "test":0.05}
 
 OUTPUT_DEFAULT_DIR = os.path.join(MODEL_DIR, MODEL_DEFAULT_NAME)
 OUTPUT_DIR = os.path.join(MODEL_DIR, MODEL_NAME)
+
+NUM_SAMPLES = 50000
 
 MAX_LENGTH = 512
 MAX_LENGTH_LABEL = 128
@@ -102,6 +104,8 @@ def process_data(data, tokenizer):
     print("Number of clean reviews:", reviews.shape[0])
     reviews = reviews[reviews["concat"].str.strip().str.len()<=MAX_LENGTH] #remove entries too long
     print("Number of right sized reviews:", reviews.shape[0])
+    reviews = reviews.sample(n=NUM_SAMPLES, random_state=127, axis=0)
+    print("Number of selected reviews:", reviews.shape[0])
     dataset = Dataset.from_pandas(reviews, split="train")
 
     #dataset = dataset.map(lambda x : tokenizer(text_target=x['Summary'], truncation=True, max_length=MAX_LENGTH_LABEL), batched=True)
@@ -178,6 +182,8 @@ def finetune(model, tokenizer, train_dataset, eval_dataset, test_dataset):
         name="linear", optimizer=optimizer, num_warmup_steps=0, num_training_steps=num_training_steps
     )
     # torch.set_default_device(device) #important
+
+    loss_list, vloss_list = [], []
  
     progress_bar = tqdm(range(num_training_steps))
     model.train()
@@ -191,13 +197,31 @@ def finetune(model, tokenizer, train_dataset, eval_dataset, test_dataset):
             #labels.to(device)
             outputs = model(inputs.cuda(), attention_mask=masks.cuda(), labels = inputs.cuda())
             loss = outputs.loss
+            loss_list.append(loss)
             loss.backward()
 
             optimizer.step()
             lr_scheduler.step()
             progress_bar.update(1)
             enum +=1
-            if enum %10000 == 0 : print(loss)
+            if enum %100 == 0 :
+                print("Training loss:", loss)
+
+        vloss = 0
+        nbatches = 0
+        model.eval()
+        with torch.no_grad():
+            for vbatch in eval_dataloader:
+                vinputs, vmasks = vbatch
+                vinputs.to(device)
+                vmasks.to(device)
+                voutputs = model(vinputs.cuda(), attention_mask=vmasks.cuda(), labels=vinputs.cuda())
+                vloss += voutputs.loss
+                nbatches += 1
+            vloss /= nbatches
+            vloss_list.append(vloss)
+            print("Validation loss:", vloss)
+        model.train()
 
         print("Model saved at epoch", epoch)
         model.save_pretrained(OUTPUT_DIR)
@@ -206,20 +230,30 @@ def finetune(model, tokenizer, train_dataset, eval_dataset, test_dataset):
     rm -rv /gdrive/'My Drive'/ ", shell = True)
         """
 
+    #For later plotting, etc.
+    with open("losses.txt", "w") as f:
+        for loss in loss_list:
+            f.write(loss)
+        f.write("\n")
+        for loss in vloss_list:
+            f.write(loss)
+        f.write("\n")
 
     metric = evaluate.load('accuracy', 'rouge')  
     model.eval()
-    for batch in test_dataloader:
-        batch = {k: v.to(device) for k, v in batch.items()}
-        with torch.no_grad():
-            outputs = model(**batch)
+    with torch.no_grad():
+        for batch in test_dataloader:
+            inputs, masks = batch
+            inputs.to(device)
+            masks.to(device)
+            outputs = model(inputs.cuda(), attention_mask=masks.cuda(), labels = inputs.cuda())
 
-        logits = outputs.logits
-        predictions = torch.argmax(logits, dim=-1)
-        metric.add_batch(predictions=predictions, references=batch["training"])
+            logits = outputs.logits
+            predictions = torch.argmax(logits, dim=-1)
+            metric.add_batch(predictions=predictions, references=batch["training"])
 
-    metric.compute()
-    print(metric)
+        metric.compute()
+        print("ROUGE:", metric)
 
     """
     #Note : There is this class called Trainer that is provided by transformers and that you fill with all the right parameters. There are a lot. So I think it's better to use pytorch (see above) (or tensorflow) rather than this interface.

@@ -17,6 +17,10 @@ To create the **requirements.txt** file from the current virtual env, use the co
 ## Dataset 
 Download **Amazon Fine Food Reviews** from the project topics file. Put the directory in the current directory.
 
+## Fine-tuned model
+
+The weights for GPT-2 are too heavy to be stored directly onto GitHub. Here is a [download link](https://drive.google.com/drive/folders/1PdwvIgehSPtqE1_8wv0ZzDrIfhZ0MK0D?usp=sharing) to the directory containing the fine-tuned model. Copy paste the directory **gpt2-117M-summary** in the **models/** directory of the repo.
+
 
 ## How to run 
 To input the model a sentence to summarize, type in :  `python3 finetune.py -ft False -i "My text to summarize"`

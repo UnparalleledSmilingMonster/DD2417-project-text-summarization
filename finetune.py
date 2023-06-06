@@ -241,10 +241,10 @@ def finetune(model, tokenizer, train_dataset, eval_dataset, test_dataset):
     #For later plotting, etc.
     with open("losses.txt", "w") as f:
         for loss in loss_list:
-            f.write(loss)
+            f.write(str(loss))
         f.write("\n")
         for loss in vloss_list:
-            f.write(loss)
+            f.write(str(loss))
         f.write("\n")
 
     metric = evaluate.load('accuracy', 'rouge')  
@@ -287,14 +287,60 @@ def finetune(model, tokenizer, train_dataset, eval_dataset, test_dataset):
     trainer.save_model()
 """
 
+def eval_model(model, tokenizer, dataset):
+    #rouge_metric= evaluate.load('rouge')
+    rouge_metric = rouge_scorer.RougeScorer(['rouge1', 'rouge2', 'rougeL'], use_stemmer=True)
+
+    dataset["text"] = dataset["text"] + " TL;DR: "
+    texts = dataset["text"].values.tolist()
+    summaries = dataset["summary"].values.tolist()
+    tokenizer.pad_token = tokenizer.eos_token
+    #tokenizer.padding_side = "left"
+    
+    #output = model.generate(**encoded_input,max_new_tokens=MAX_LENGTH_GENERATION, min_new_tokens =MIN_LENGTH_GENERATION,  do_sample=False,temperature = 1.0, top_k=50, num_beams = 2) #parameters to tune for the task
+    
+    rouge_1_prec =[]
+    rouge_1_rec=[]
+    
+    rouge_2_prec =[]
+    rouge_2_rec=[]
+    
+    rouge_L_prec =[]
+    rouge_L_rec=[]
+    for i in range(len(texts[:20])):
+        encoded_input = tokenizer(text_target=texts[i], padding = True, truncation=True, max_length=MAX_LENGTH, return_tensors="pt")
+        outputs = model.generate(**encoded_input,max_new_tokens=MAX_LENGTH_GENERATION, min_new_tokens =MIN_LENGTH_GENERATION,  do_sample=True, no_repeat_ngram_size=2,temperature =0.8, top_k=50, top_p=0.7)
+        prediction = tokenizer.decode(outputs[0], skip_special_tokens = True)
+    
+        prediction = prediction.split(' ')
+        idx_tldr = prediction.index("TL;DR:")
+        prediction = prediction[idx_tldr+1:]  
+        prediction = ' '.join(prediction)   
+                
+        scores = rouge_metric.score(prediction, summaries[i])
+        rouge_1_prec.append(scores["rouge1"].precision)
+        rouge_1_rec.append(scores["rouge1"].recall)
+        rouge_2_prec.append(scores["rouge2"].precision)
+        rouge_2_rec.append(scores["rouge2"].recall)
+        rouge_L_prec.append(scores["rougeL"].precision)
+        rouge_L_rec.append(scores["rougeL"].recall)
+#rouge_metric.compute()
+        #print(dir(rouge_metric))
+    
+    print(max(rouge_1_prec))
+    print(max(rouge_1_rec))
+
 
 def summarize(model, tokenizer, text):
     """
     Given a text input, summarizes it.
     """
     text += " TL;DR: "
-    encoded_input = tokenizer(text_target=text, truncation=True, max_length=MAX_LENGTH_LABEL,return_tensors="pt")
+    encoded_input = tokenizer(text_target=text, truncation=True, max_length=MAX_LENGTH,return_tensors="pt")
     output = model.generate(**encoded_input,max_new_tokens=MAX_LENGTH_GENERATION, min_new_tokens =MIN_LENGTH_GENERATION,  do_sample=False,temperature = 1.0, top_k=50, num_beams = 2) #parameters to tune for the task
+    
+    #output = model.generate(**encoded_input,max_new_tokens=MAX_LENGTH_GENERATION, min_new_tokens =MIN_LENGTH_GENERATION,  do_sample=True, no_repeat_ngram_size=2,temperature =0.8, top_k=100, top_p=0.7)
+    
     print("Summary :\n", tokenizer.decode(output[0], skip_special_tokens=True))
 
 
@@ -307,6 +353,7 @@ def main() :
    # Parse command line arguments
     parser = argparse.ArgumentParser(description='GPT-2 Parser')
     parser.add_argument('--finetune', '-ft', type=my_bool,  default=True, help='Whether to finetune or not.')
+    parser.add_argument('--eval', '-e', type=my_bool, default = False, help = 'Whether to eval the model or not.')
     parser.add_argument('--input_sentence', '-i', type=str, default=default_text, help='The sentence to be summarized.')
 
     arguments = parser.parse_args()
@@ -320,6 +367,12 @@ def main() :
         dataset = load_data(data)
         print("Fine-tuning...")
         finetune(model, tokenizer, dataset["train"], dataset["validation"], dataset["test"])
+    
+    if arguments.eval :
+        data_test = os.path.join(DATASET_DIR, DATASET_NAME_TEST)
+        dataset_test = pd.read_json(data_test, lines = True)
+        print("Evaluating the model...")
+        eval_model(model, tokenizer, dataset_test)
 
     else:
         print("Summarizing the text inputted.")

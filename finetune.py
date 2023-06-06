@@ -241,10 +241,10 @@ def finetune(model, tokenizer, train_dataset, eval_dataset, test_dataset):
     #For later plotting, etc.
     with open("losses.txt", "w") as f:
         for loss in loss_list:
-            f.write(loss)
+            f.write(str(loss))
         f.write("\n")
         for loss in vloss_list:
-            f.write(loss)
+            f.write(str(loss))
         f.write("\n")
 
     metric = evaluate.load('accuracy', 'rouge')  

@@ -19,7 +19,7 @@ from transformers import get_scheduler
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
 import evaluate
-
+from rouge_score import rouge_scorer, scoring
 
 
 
@@ -28,6 +28,7 @@ import evaluate
 DATASET_ORIG_DIR = "AmazonFineFoods"
 DATASET_DIR = "datasets"
 DATASET_NAME = "dataset_tokenized.json"
+DATASET_NAME_TEST = "dataset_tokenized_test.json"
 
 MODEL_DIR = "models"
 MODEL_DEFAULT_NAME = "gpt2-117M"
@@ -41,7 +42,7 @@ NUM_SAMPLES = 50000
 
 MAX_LENGTH = 512
 MAX_LENGTH_LABEL = 128
-MAX_LENGTH_GENERATION = 10
+MAX_LENGTH_GENERATION = 8
 MIN_LENGTH_GENERATION = 2
 
 OVERWRITE_OUTPUT_DIR = False
@@ -287,48 +288,242 @@ def finetune(model, tokenizer, train_dataset, eval_dataset, test_dataset):
     trainer.save_model()
 """
 
+
 def eval_model(model, tokenizer, dataset):
-    #rouge_metric= evaluate.load('rouge')
     rouge_metric = rouge_scorer.RougeScorer(['rouge1', 'rouge2', 'rougeL'], use_stemmer=True)
 
     dataset["text"] = dataset["text"] + " TL;DR: "
-    texts = dataset["text"].values.tolist()
-    summaries = dataset["summary"].values.tolist()
+    # texts = dataset["text"].values.tolist()
+    # summaries = dataset["summary"].values.tolist()
     tokenizer.pad_token = tokenizer.eos_token
     #tokenizer.padding_side = "left"
     
-    #output = model.generate(**encoded_input,max_new_tokens=MAX_LENGTH_GENERATION, min_new_tokens =MIN_LENGTH_GENERATION,  do_sample=False,temperature = 1.0, top_k=50, num_beams = 2) #parameters to tune for the task
+
+    #GRID SEARCH
+
+    sample_size = 200
+    rows = np.zeros(dataset.shape[0])
+    rows[np.random.choice(np.arange(0, dataset.shape[0]), size=sample_size, replace=False)] = 1
+    rows = rows.astype("bool", copy=False)
+    sample_texts = dataset[rows]["text"].values.tolist()
+    sample_summaries = dataset[rows]["summary"].values.tolist()
+
+    def dic_init():
+        return {"r1p": np.zeros(sample_size), "r1r": np.zeros(sample_size),
+                "r2p": np.zeros(sample_size), "r2r": np.zeros(sample_size),
+                "rLp": np.zeros(sample_size), "rLr": np.zeros(sample_size)}
+
+    def save_statistics(scores, rouge_dic, idx):
+        rouge_dic["r1p"][idx] = scores["rouge1"].precision
+        rouge_dic["r1r"][idx] = scores["rouge1"].recall
+        rouge_dic["r2p"][idx] = scores["rouge2"].precision
+        rouge_dic["r2r"][idx] = scores["rouge2"].recall
+        rouge_dic["rLp"][idx] = scores["rougeL"].precision
+        rouge_dic["rLr"][idx] = scores["rougeL"].recall
     
-    rouge_1_prec =[]
-    rouge_1_rec=[]
-    
-    rouge_2_prec =[]
-    rouge_2_rec=[]
-    
-    rouge_L_prec =[]
-    rouge_L_rec=[]
-    for i in range(len(texts[:20])):
-        encoded_input = tokenizer(text_target=texts[i], padding = True, truncation=True, max_length=MAX_LENGTH, return_tensors="pt")
-        outputs = model.generate(**encoded_input,max_new_tokens=MAX_LENGTH_GENERATION, min_new_tokens =MIN_LENGTH_GENERATION,  do_sample=True, no_repeat_ngram_size=2,temperature =0.8, top_k=50, top_p=0.7)
-        prediction = tokenizer.decode(outputs[0], skip_special_tokens = True)
-    
-        prediction = prediction.split(' ')
-        idx_tldr = prediction.index("TL;DR:")
-        prediction = prediction[idx_tldr+1:]  
-        prediction = ' '.join(prediction)   
-                
-        scores = rouge_metric.score(prediction, summaries[i])
-        rouge_1_prec.append(scores["rouge1"].precision)
-        rouge_1_rec.append(scores["rouge1"].recall)
-        rouge_2_prec.append(scores["rouge2"].precision)
-        rouge_2_rec.append(scores["rouge2"].recall)
-        rouge_L_prec.append(scores["rougeL"].precision)
-        rouge_L_rec.append(scores["rougeL"].recall)
-#rouge_metric.compute()
-        #print(dir(rouge_metric))
-    
-    print(max(rouge_1_prec))
-    print(max(rouge_1_rec))
+    def average_results(final_results, rouge_dic, idx, temp):
+        final_results[idx][temp]["r1p"] = rouge_dic["r1p"].mean()
+        final_results[idx][temp]["r1r"] = rouge_dic["r1r"].mean()
+        final_results[idx][temp]["r2p"] = rouge_dic["r2p"].mean()
+        final_results[idx][temp]["r2r"] = rouge_dic["r2r"].mean()
+        final_results[idx][temp]["rLp"] = rouge_dic["rLp"].mean()
+        final_results[idx][temp]["rLr"] = rouge_dic["rLr"].mean()
+
+    def write_to_file(final_results, idx, temp):
+        with open("rouge_results.txt", "a") as f:
+            f.write(str(idx) + " " + str(temp) + "\n")
+            f.write(str(round(final_results[idx][temp]["r1p"], 4)) + " ")
+            f.write(str(round(final_results[idx][temp]["r1r"], 4)) + " ")
+            f.write(str(round(final_results[idx][temp]["r2p"], 4)) + " ")
+            f.write(str(round(final_results[idx][temp]["r2r"], 4)) + " ")
+            f.write(str(round(final_results[idx][temp]["rLp"], 4)) + " ")
+            f.write(str(round(final_results[idx][temp]["rLr"], 4)) + "\n")
+
+    final_results = {0: {"t02": {}, "t04": {}, "t06": {}, "t08": {}, "t10": {}},
+                     1: {"t02": {}, "t04": {}, "t06": {}, "t08": {}, "t10": {}},
+                     2: {"t02": {}, "t04": {}, "t06": {}, "t08": {}, "t10": {}},
+                     3: {"t02": {}, "t04": {}, "t06": {}, "t08": {}, "t10": {}},
+                     4: {"t02": {}, "t04": {}, "t06": {}, "t08": {}, "t10": {}},
+                     5: {"t02": {}, "t04": {}, "t06": {}, "t08": {}, "t10": {}},
+                     6: {"t02": {}, "t04": {}, "t06": {}, "t08": {}, "t10": {}},
+                     7: {"t02": {}, "t04": {}, "t06": {}, "t08": {}, "t10": {}},
+                     8: {"t02": {}, "t04": {}, "t06": {}, "t08": {}, "t10": {}},
+                     9: {"t02": {}, "t04": {}, "t06": {}, "t08": {}, "t10": {}},
+                     10: {"t02": {}, "t04": {}, "t06": {}, "t08": {}, "t10": {}},
+                     11: {"t02": {}, "t04": {}, "t06": {}, "t08": {}, "t10": {}},
+                     12: {"t02": {}, "t04": {}, "t06": {}, "t08": {}, "t10": {}},
+                     13: {"t02": {}, "t04": {}, "t06": {}, "t08": {}, "t10": {}},
+                     14: {"t02": {}, "t04": {}, "t06": {}, "t08": {}, "t10": {}},}
+
+    temp_range = [0.2, 0.4, 0.6, 0.8, 1]
+    temp_names = ["t02", "t04", "t06", "t08", "t10"]
+
+    for step in range(15):
+        if step == 0:
+            print("Greedy search")
+        elif step == 1:
+            print("Beam search, 2 beams")
+        elif step == 2:
+            print("Beam search, 4 beams")
+        elif step == 3:
+            print("Sampling")
+        elif step == 4:
+            print("Top-25 sampling")
+        elif step == 5:
+            print("Top-50 sampling")
+        elif step == 6:
+            print("Top-100 sampling")
+        elif step == 7:
+            print("Top-0.6 sampling")
+        elif step == 8:
+            print("Top-0.7 sampling")
+        elif step == 9:
+            print("Top-0.8 sampling")
+        elif step == 10:
+            print("Top-0.9 sampling")
+        elif step == 11:
+            print("Top 50, top-0.6 sampling")
+        elif step == 12:
+            print("Top 50, top-0.7 sampling")
+        elif step == 13:
+            print("Top 50, top-0.8 sampling")
+        else:
+            print("Top 50, top-0.9 sampling")
+        for j, t in enumerate(temp_range):
+            rouge_dic = dic_init()
+            for i in tqdm(range(len(sample_texts))):
+                encoded_input = tokenizer(text_target=sample_texts[i], padding=True, truncation=True,
+                                        max_length=MAX_LENGTH, return_tensors="pt")
+                if step == 0:
+                    outputs = model.generate(**encoded_input, pad_token_id=tokenizer.eos_token_id,
+                                        max_new_tokens=MAX_LENGTH_GENERATION, min_new_tokens=MIN_LENGTH_GENERATION,
+                                        do_sample=False,
+                                        no_repeat_ngram_size=2,
+                                        temperature=t)
+                elif step == 1:
+                    outputs = model.generate(**encoded_input, pad_token_id=tokenizer.eos_token_id,
+                                        max_new_tokens=MAX_LENGTH_GENERATION, min_new_tokens=MIN_LENGTH_GENERATION,
+                                        num_beams=2,
+                                        early_stopping=True,
+                                        do_sample=False,
+                                        no_repeat_ngram_size=2,
+                                        temperature=t)
+                elif step == 2:
+                    outputs = model.generate(**encoded_input, pad_token_id=tokenizer.eos_token_id,
+                                        max_new_tokens=MAX_LENGTH_GENERATION, min_new_tokens=MIN_LENGTH_GENERATION,
+                                        num_beams=4,
+                                        early_stopping=True,
+                                        do_sample=False,
+                                        no_repeat_ngram_size=2,
+                                        temperature=t)
+                elif step == 3:
+                    outputs = model.generate(**encoded_input, pad_token_id=tokenizer.eos_token_id,
+                                        max_new_tokens=MAX_LENGTH_GENERATION, min_new_tokens=MIN_LENGTH_GENERATION,
+                                        do_sample=True,
+                                        no_repeat_ngram_size=2,
+                                        top_k = 0,
+                                        temperature=t)
+                elif step == 4:
+                    outputs = model.generate(**encoded_input, pad_token_id=tokenizer.eos_token_id,
+                                        max_new_tokens=MAX_LENGTH_GENERATION, min_new_tokens=MIN_LENGTH_GENERATION,
+                                        do_sample=True,
+                                        no_repeat_ngram_size=2,
+                                        top_k = 25,
+                                        temperature=t)
+                elif step == 5:
+                    outputs = model.generate(**encoded_input, pad_token_id=tokenizer.eos_token_id,
+                                        max_new_tokens=MAX_LENGTH_GENERATION, min_new_tokens=MIN_LENGTH_GENERATION,
+                                        do_sample=True,
+                                        no_repeat_ngram_size=2,
+                                        top_k = 50,
+                                        temperature=t)
+                elif step == 6:
+                    outputs = model.generate(**encoded_input, pad_token_id=tokenizer.eos_token_id,
+                                        max_new_tokens=MAX_LENGTH_GENERATION, min_new_tokens=MIN_LENGTH_GENERATION,
+                                        do_sample=True,
+                                        no_repeat_ngram_size=2,
+                                        top_k = 100,
+                                        temperature=t)
+                elif step == 7:
+                    outputs = model.generate(**encoded_input, pad_token_id=tokenizer.eos_token_id,
+                                        max_new_tokens=MAX_LENGTH_GENERATION, min_new_tokens=MIN_LENGTH_GENERATION,
+                                        do_sample=True,
+                                        no_repeat_ngram_size=2,
+                                        top_k = 0,
+                                        top_p = 0.6,
+                                        temperature=t)
+                elif step == 8:
+                    outputs = model.generate(**encoded_input, pad_token_id=tokenizer.eos_token_id,
+                                        max_new_tokens=MAX_LENGTH_GENERATION, min_new_tokens=MIN_LENGTH_GENERATION,
+                                        do_sample=True,
+                                        no_repeat_ngram_size=2,
+                                        top_k = 0,
+                                        top_p = 0.7,
+                                        temperature=t)
+                elif step == 9:
+                    outputs = model.generate(**encoded_input, pad_token_id=tokenizer.eos_token_id,
+                                        max_new_tokens=MAX_LENGTH_GENERATION, min_new_tokens=MIN_LENGTH_GENERATION,
+                                        do_sample=True,
+                                        no_repeat_ngram_size=2,
+                                        top_k = 0,
+                                        top_p = 0.8,
+                                        temperature=t)
+                elif step == 10:
+                    outputs = model.generate(**encoded_input, pad_token_id=tokenizer.eos_token_id,
+                                        max_new_tokens=MAX_LENGTH_GENERATION, min_new_tokens=MIN_LENGTH_GENERATION,
+                                        do_sample=True,
+                                        no_repeat_ngram_size=2,
+                                        top_k = 0,
+                                        top_p = 0.9,
+                                        temperature=t)
+                elif step == 11:
+                    outputs = model.generate(**encoded_input, pad_token_id=tokenizer.eos_token_id,
+                                        max_new_tokens=MAX_LENGTH_GENERATION, min_new_tokens=MIN_LENGTH_GENERATION,
+                                        do_sample=True,
+                                        no_repeat_ngram_size=2,
+                                        top_k = 50,
+                                        top_p = 0.6,
+                                        temperature=t) 
+                elif step == 12:
+                    outputs = model.generate(**encoded_input, pad_token_id=tokenizer.eos_token_id,
+                                        max_new_tokens=MAX_LENGTH_GENERATION, min_new_tokens=MIN_LENGTH_GENERATION,
+                                        do_sample=True,
+                                        no_repeat_ngram_size=2,
+                                        top_k = 50,
+                                        top_p = 0.7,
+                                        temperature=t)
+                elif step == 13:
+                    outputs = model.generate(**encoded_input, pad_token_id=tokenizer.eos_token_id,
+                                        max_new_tokens=MAX_LENGTH_GENERATION, min_new_tokens=MIN_LENGTH_GENERATION,
+                                        do_sample=True,
+                                        no_repeat_ngram_size=2,
+                                        top_k = 50,
+                                        top_p = 0.8,
+                                        temperature=t)
+                else:
+                    outputs = model.generate(**encoded_input, pad_token_id=tokenizer.eos_token_id,
+                                        max_new_tokens=MAX_LENGTH_GENERATION, min_new_tokens=MIN_LENGTH_GENERATION,
+                                        do_sample=True,
+                                        no_repeat_ngram_size=2,
+                                        top_k = 50,
+                                        top_p = 0.9,
+                                        temperature=t) 
+                prediction = tokenizer.decode(outputs[0], skip_special_tokens = True)
+                prediction = prediction.split(' ')
+                idx_tldr = prediction.index("TL;DR:")
+                prediction = prediction[idx_tldr+1:]  
+                prediction = ' '.join(prediction)  
+                scores = rouge_metric.score(prediction, sample_summaries[i])
+                save_statistics(scores, rouge_dic, i)
+            average_results(final_results, rouge_dic, step, temp_names[j])
+            write_to_file(final_results, step, temp_names[j])
+            
+    # for i in range(len(sample_texts)):
+    #     encoded_input = tokenizer(text_target=sample_texts[i], padding = True, truncation=True, max_length=MAX_LENGTH, return_tensors="pt")
+    #     outputs = model.generate(**encoded_input, max_new_tokens=MAX_LENGTH_GENERATION,
+    #                             min_new_tokens =MIN_LENGTH_GENERATION,  do_sample=True,
+    #                             no_repeat_ngram_size=2,temperature =0.8, top_k=50, top_p=0.7)
+    #     prediction = tokenizer.decode(outputs[0], skip_special_tokens = True)
 
 
 def summarize(model, tokenizer, text):

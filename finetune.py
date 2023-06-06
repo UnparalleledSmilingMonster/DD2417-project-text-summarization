@@ -241,10 +241,10 @@ def finetune(model, tokenizer, train_dataset, eval_dataset, test_dataset):
     #For later plotting, etc.
     with open("losses.txt", "w") as f:
         for loss in loss_list:
-            f.write(str(loss))
+            f.write(str(loss) + ".")
         f.write("\n")
         for loss in vloss_list:
-            f.write(str(loss))
+            f.write(str(loss) + ".")
         f.write("\n")
 
     metric = evaluate.load('accuracy', 'rouge')  
@@ -296,6 +296,10 @@ def summarize(model, tokenizer, text):
     encoded_input = tokenizer(text_target=text, truncation=True, max_length=MAX_LENGTH_LABEL,return_tensors="pt")
     output = model.generate(**encoded_input,max_new_tokens=MAX_LENGTH_GENERATION, min_new_tokens =MIN_LENGTH_GENERATION,  do_sample=False,temperature = 1.0, top_k=50, num_beams = 2) #parameters to tune for the task
     print("Summary :\n", tokenizer.decode(output[0], skip_special_tokens=True))
+
+
+def plot():
+
 
 
 def main() :  

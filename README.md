@@ -31,7 +31,8 @@ A list of arguments is provided to the parser :
 - -e to eval the model
 - -i to input a sentence 
 
-You should only try the last one as the first one does not compile on cpu and the second one will crash without the dataset properly generated.
+You should only try the last one as the first one does not compile on cpu (we set the device to gpu as the cpu cannot handle the load and terminates the program)
+and the second one will crash without the dataset properly generated.
 
     
 

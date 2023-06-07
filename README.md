@@ -27,7 +27,7 @@ To input the model a sentence to summarize, type in :  `python3 finetune.py -ft 
 
 
 A list of arguments is provided to the parser :
-- -ft to finetune the model
+- -ft to finetune the model (default to True so actively set it to False in the arg parser)
 - -e to eval the model
 - -i to input a sentence 
 
